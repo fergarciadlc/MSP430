@@ -1,0 +1,193 @@
+ ;//******************************************************************************
+;// Programa para controlar un LCD de 16 caracteres por 2 líneas, utilizando tres 
+;// terminales del microcontrolador
+;//
+;//                MSP430G2553
+;//        3.3V -----------------       SN74HC164            LCD 16 x 2
+;//        /|\ |                 |     ___________            _______
+;//         |--| Vcc         P2.2|--->|CLOCK    Qa|---RS --> |  ___  |-->5V
+;//            |             P2.3|-+->|A        Qb|---DB4--> | |   | |
+;//            |                 | |->|B        Qc|---DB5--> | |   | |
+;//            |                 |    |         Qd|---DB6--> | |   | |
+;//            |                 |    |         Qe|---DB7--> | | L | |
+;//            |                 |    |      CLEAR|-->5V     | | C | |
+;//            |                 |    |___________|          | | D | |
+;//            |                 |                           | |   | |
+;//            |             P2.4|-------------------- E --> | |___| |RW---|GND
+;//            |                 |                           |_______|GND--+
+;//            |             Vss |-->GND                                 __|__
+;//            |                 |                                        ___
+;// JULIO 2012  IPN                                                        _
+;// EDGAR R CALDERÓN DÍAZ 
+;//******************************************************************************     
+
+#define     CLK         (0x04)
+#define     AB          (0x08)
+#define     E           (0x10)
+
+#include    "msp430g2553.h"                  ; #define controlled include file
+;-------------------------------------------------------------------------------        
+            ORG     0xFC16                    ;Inicio del programa
+;-------------------------------------------------------------------------------
+
+;Rutina de inicialización LCD para un Bus de datos de 4Bits
+INI_LCD:    MOV.W   #0xFFFF,R14
+            CALL    #TIEMPO
+                        
+            BIC.B   #E+AB+CLK,&P2SEL        ;Configuración de las terminales 
+            BIS.B   #E+AB+CLK,&P2DIR        ;P2.2, P2.3 y P2.4 para controlar el 
+            BIC.B   #E+AB+CLK,&P2OUT        ;74HC164 y el LCD
+            
+            MOV.W   #23998,R14              ;Since VDD reaches more than 4.5V 
+            CALL    #TIEMPO                 ;wait more than 15ms DCO=1MHz 2998, DCO=8MHZ  23998
+            
+            BIS.B   #CLK,&P2OUT             ;Function Set(Interface data length is 8-bit)
+            BIC.B   #CLK,&P2OUT             ;|RS|R/W|DB7|DB6|DB5|DB4|
+            BIS.B   #CLK,&P2OUT             ;| 0| 0 | 0 | 0 | 1 | 0 |
+            BIC.B   #CLK,&P2OUT             ;Wait more than 40 us
+            BIS.B   #AB,&P2OUT              ;DCO=1MHz 6
+            BIS.B   #CLK,&P2OUT             ;DCO=8MHZ  62
+            BIC.B   #CLK,&P2OUT
+            BIC.B   #AB,&P2OUT
+            BIS.B   #CLK,&P2OUT             
+            BIC.B   #CLK,&P2OUT
+            BIS.B   #CLK,&P2OUT             
+            BIC.B   #CLK,&P2OUT
+            BIS.B   #E,&P2OUT             
+            BIC.B   #E,&P2OUT
+            MOV.W   #62,R14
+            CALL    #TIEMPO
+                                                        
+            MOV.B   #0x28,R15               ;Function Set (Set interface data length (DL) number ofdisplay lines (N) and character font (F).)
+            CALL    #CMD_LCD                ;|DL=1 8bits DL=0 4bits| N=1 2 lines N=0 1line| F=1 5x10dots F=0 5x7dots|
+                                            ;|RS|R/W|DB7|DB6|DB5| DB4|
+                                            ;|  |   |DB3|DB2|DB1| DB0|
+                                            ;| 0| 0 | 0 | 0 | 1 |DL=0|
+                                            ;| 0| 0 |N=1|F=0| X | X  |  
+                                            ;Wait more than 40 us
+                                            
+            MOV.B   #0x0F,R15               ;Display ON/OFF Control (Set ON/OFF of entire display (D),dresser ON/OFF (C), and blinking of cursor position B)
+            CALL    #CMD_LCD                ;|RS|R/W|DB7|DB6|DB5|DB4|
+                                            ;|  |   |DB3|DB2|DB1|DB0|
+                                            ;| 0| 0 | 0 | 0 | 0 | 0 |
+                                            ;| 0| 0 | 1 |D=1|C=1|B=1|  
+                                            ;Wait more than 40 us
+            
+            MOV.B   #0x01,R15               ;Display Clear
+            CALL    #CMD_LCD                ;|RS|R/W|DB7|DB6|DB5|DB4|
+                                            ;|  |   |DB3|DB2|DB1|DB0|
+                                            ;| 0| 0 | 0 | 0 | 0 | 0 |
+                                            ;| 0| 0 | 0 | 0 | 0 | 1 |
+                                            ;Wait more than 1.64ms
+            RET                                
+            
+;Rutina para enviar comandos al LCD
+CMD_LCD:    PUSH.B  R15
+            MOV.B   R15,R14
+            AND.W   #0x00F0,R15
+            RLA.W   R15
+            RLA.W   R15
+            AND.W   #0x000F,R14
+            RLA.W   R14
+            ADD.W   R14,R15               ;RS = 0      
+            CALL    #ENVIO_10BITS
+            POP.B   R15
+            MOV     #62,R14               ;Pausa de 40us (Para 1MHz 6, para 8MHz 62)
+            AND.B   #0xFC,R15
+            JNZ     P_1_64m
+            MOV     #2622,R14             ;Pausa de 1.64ms (Para 1MHz 326, para 8MHz 2622)
+P_1_64m:    CALL    #TIEMPO
+            RET  
+            
+;Rutina para enviar datos al LCD
+DATO_LCD    MOV.B   R15,R14
+            AND.W   #0x00F0,R15
+            RLA.W   R15
+            RLA.W   R15
+            AND.W   #0x000F,R14
+            RLA.W   R14
+            ADD.W   R14,R15
+            BIS.W   #BIT5+BIT0,R15        ;RS = 1
+            CALL    #ENVIO_10BITS
+            MOV     #62,R14               ;Pausa de 40 microsegundos aprox.
+            CALL    #TIEMPO
+            RET    
+; Rutina para enviar 10bits en forma serial por la terminal P2.3            
+ENVIO_10BITS: 
+            MOV.B   #10,R14
+ENVIAR_1    BIT.W   #BIT9,R15
+            JZ      ENVIAR_0
+            BIS.B   #AB,&P2OUT
+            BIS.B   #CLK,&P2OUT           ;Generación del pulso de reloj para el 74hc164, terminal P2.2
+            BIC.B   #CLK,&P2OUT           ;P2.2 = 1 CLOCK  _   
+            RLA.W   R15                   ;P2.2 = 0      _| |_
+            DEC.B   R14
+            CMP.B   #5,R14
+            JEQ     SAL_1
+            CMP.B   #0,R14
+            JEQ     SAL_1
+            JMP     ENVIAR_1 
+            
+ENVIAR_0    BIC.B   #AB,&P2OUT
+            BIS.B   #CLK,&P2OUT           ;Generación del pulso de reloj para el 74hc164, terminal P2.2
+            BIC.B   #CLK,&P2OUT           ;P2.2 = 1 CLOCK  _  
+            RLA.W   R15                   ;P2.2 = 0      _| |_
+            DEC.B   R14
+            CMP.B   #5,R14
+            JEQ     SAL_1
+            CMP.B   #0,R14
+            JEQ     SAL_1
+            JMP     ENVIAR_1 
+
+SAL_1       BIS.B   #E,&P2OUT           ;Envio del pulso de habilitación de la terminal E del LCD
+            BIC.B   #E,&P2OUT           ;P2.4 = 1        _    
+            CMP.B   #0,R14              ;P2.4 = 0      _| |_
+            JNE     ENVIAR_1
+            RET
+            
+;Rutina para desplegar letreros en el LCD
+IMP_LET     MOV.B   @R13+,R15
+            CMP     #00,R15
+            JEQ     SAL_LET
+            CALL    #DATO_LCD
+            JMP     IMP_LET
+SAL_LET     RET             
+
+;Rutina de tiempo (5us  para DCO = 1MHz) 
+TIEMPO:     DEC.W   R14
+            NOP
+            NOP
+            JNZ     TIEMPO
+            RET
+            
+;-------------------------------------------------------------------------------
+;           Rutina para realizar una multiplicación sin signo
+; Los registros R11 y R12 son los datos a multiplicar y el resultado es guardado
+; en los registros R15 y R14, R15 = MSBs y R14 = LSBs
+;
+;                         R11 x R12 = R15|R14
+;
+;                 (Los registros R10 y R13 son de trabajo)
+;-------------------------------------------------------------------------------
+MULT        CLR.W   R14                     ;Limpiando los registros de resultado
+            CLR.W   R15                     ;0 -> LSBs (R14), 0 -> MSBs (R15)
+            CLR.W   R13
+            MOV.W   #1,R10
+MULT2       BIT.W   R10,R11
+            JZ      MULT1
+            ADD.W   R12,R14
+            ADDC.W  R13,R15
+MULT1       RLA.W   R12                     ;Multiplicación x 2
+            RLC.W   R13
+            RLA.W   R10                     
+            JNC     MULT2                   ;Si existe acarreo: terminar
+            RET
+            
+;RUTINA DE DIVISION
+DIV         bic.w   #00FFh,R14              ; /1024
+            add.w   R15,R14                 ;R15|R14 registros a dividir / 1024
+            swpb    R14                     ;
+            rra.w   R14                     ;
+            rra.w   R14                     ;Resultado de la división en R14
+            RET     
+
